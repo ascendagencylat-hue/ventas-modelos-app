@@ -1,60 +1,68 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import gspread
+from google.colab import auth
+from google.auth import default
 
-# Lista de modelos (cambia con los tuyos; para Sheets, cambia después)
-modelos = ["Ana", "Sofia", "Valeria", "Luna", "María"]
+# Autenticación con OAuth (no necesita JSON)
+auth.authenticate_user()
+creds, _ = default()
+gc = gspread.authorize(creds)
 
-servicios = ["Sexting", "Llamada", "Custom Video", "GFE"]
-metodos = ["CashApp", "Venmo", "PayPal", "Zelle", "Throne", "Amazon Gift Card", "Crypto"]
+# Abre tu hoja (cambia el nombre si es diferente)
+sh = gc.open("Ventas Modelos Simple")  # Pon el nombre exacto de tu Sheet
 
-# Datos en memoria (para Sheets, agrega gspread después)
-if "ventas" not in st.session_state:
-    st.session_state.ventas = pd.DataFrame(columns=["Fecha", "Modelo", "Monto USD", "Servicio", "Método"])
+ws_modelos = sh.worksheet("Modelos")
+ws_ventas = sh.worksheet("Registro")
 
-df = st.session_state.ventas
+# Cargar modelos automáticamente
+modelos = ws_modelos.col_values(1)[1:]  # Desde A2
+
+# Cargar ventas para reporte
+ventas_data = ws_ventas.get_all_records()
+df = pd.DataFrame(ventas_data)
 
 st.title("Ventas Modelos")
 
-# Pantalla 1: Lista de modelos clickable
+# Lista de modelos clickable
 st.header("Modelos")
 for modelo in modelos:
     if st.button(modelo, key=modelo):
-        st.session_state.selected = modelo
+        st.session_state.selected_modelo = modelo
 
-# Pantalla 2: Formulario
-if "selected" in st.session_state:
-    st.header(f"Venta para {st.session_state.selected}")
-    monto = st.number_input("Monto USD", min_value=0.0)
-    servicio = st.selectbox("Servicio", servicios)
-    metodo = st.selectbox("Método de Pago", metodos)
-    if st.button("Guardar"):
+# Formulario
+if "selected_modelo" in st.session_state:
+    st.header(f"Venta para {st.session_state.selected_modelo}")
+    monto = st.number_input("Monto USD", min_value=0.0, step=1.0)
+    servicio = st.selectbox("Servicio", ["Sexting", "Llamada", "Custom Video", "GFE"])
+    metodo = st.selectbox("Método de Pago", ["CashApp", "Venmo", "PayPal", "Zelle", "Throne", "Amazon Gift Card", "Crypto"])
+    if st.button("Guardar Venta"):
         if monto > 0:
-            nueva = pd.DataFrame({
-                "Fecha": [datetime.now().strftime("%d/%m/%Y %H:%M:%S")],
-                "Modelo": [st.session_state.selected],
-                "Monto USD": [monto],
-                "Servicio": [servicio],
-                "Método": [metodo]
-            })
-            st.session_state.ventas = pd.concat([df, nueva], ignore_index=True)
+            nueva_venta = [
+                datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                st.session_state.selected_modelo,
+                monto,
+                servicio,
+                metodo
+            ]
+            ws_ventas.append_row(nueva_venta)
             st.success("Guardado!")
-            del st.session_state.selected
+            del st.session_state.selected_modelo
         else:
             st.error("Monto inválido")
 
-# Pantalla 3: Reporte
+# Reporte
 st.header("Reporte")
 fecha_desde = st.date_input("Desde")
 fecha_hasta = st.date_input("Hasta")
 report_modelo = st.selectbox("Modelo", ["Todos"] + modelos)
 if st.button("Ver Reporte"):
-    df_temp = df.copy()
-    df_temp['Fecha'] = pd.to_datetime(df_temp['Fecha'], format="%d/%m/%Y %H:%M:%S")
-    mask = (df_temp['Fecha'] >= pd.to_datetime(fecha_desde)) & (df_temp['Fecha'] <= pd.to_datetime(fecha_hasta))
-    report_df = df_temp[mask]
+    df['Fecha'] = pd.to_datetime(df['Fecha'], format="%d/%m/%Y %H:%M:%S")
+    mask = (df['Fecha'] >= pd.to_datetime(fecha_desde)) & (df['Fecha'] <= pd.to_datetime(fecha_hasta))
+    report_df = df[mask]
     if report_modelo != "Todos":
         report_df = report_df[report_df['Modelo'] == report_modelo]
     total = report_df['Monto USD'].sum()
-    st.write(f"**Total USD: ${total:.2f}**")
+    st.write(f"Total USD: ${total:.2f}")
     st.dataframe(report_df)
